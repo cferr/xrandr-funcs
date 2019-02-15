@@ -1,0 +1,335 @@
+#!/bin/bash
+
+# This script manages displays for X11 environments. 
+# It is meant to perform the most common tasks with displays: presentation mode
+# (e.g. when in conference / meeting and you want two different displays),
+# clones (at both the laptop's panel and the external display's preferred
+# resolutions, depending on who should be able to read text) and single-display
+# modes.
+# 
+# This script requires:
+#   - xrandr
+#   - pulseaudio (it switches audio to HDMI / laptop, useful for TVs)
+#   - zenity (to show status notifications)
+#
+# Calling "xrandr_funcs round_robin" rotates between all the modes.
+# "xrandr_funcs edp" sets the display to laptop panel (often eDP =
+#   Embedded DisplayPort)
+# "xrandr_funcs hdmi" sets the display to external only 
+# "xrandr_funcs clone_edp" (resp. "clone_hdmi") clones both displays, at the
+#   laptop's (resp. external display's) preferred resolution
+# "xrandr_funcs present" creates two displays: laptop on the left, external
+#   display on the right
+#
+# Setting the display names is done through environment variables.
+# If you want the round-robin to be assigned a keyboard shortcut, you may want
+# to add to your .bashrc (adapt to your displays):
+# export INTERNAL_MONITOR="eDP1"
+# 
+# If you want to restrict this script to one output port, you may set:
+# export EXTERNAL_MONITOR="HDMI1"
+# 
+# In order to find out the display names, use the "xrandr" command.
+
+set_xrandr_var() {
+   XRANDR_CURRENT="$(xrandr --current)"
+   if [ "$EXTERNAL_MONITOR" == "" ]; then
+      detect_external
+   fi;
+}
+
+detect_external() {
+   AVAIL_RES_LIST=$XRANDR_CURRENT
+   CURRENT_MON=""
+   
+   EXTERNAL_MONITOR=$(printf '%s\n' "$AVAIL_RES_LIST" | ( while read -r line; do
+      IS_MON="$(echo $line | grep -c "connected")";
+      if [ $IS_MON == 1 ]; then
+         CURRENT_MON="$(echo $line | grep -oE ".* connected" |  sed "s/ .*//g")";
+         if [ "$CURRENT_MON" != "$INTERNAL_MONITOR" ]; then
+            echo -n "$CURRENT_MON"
+         fi;
+      fi;
+   done ))
+   
+}
+
+current_mon_res() {
+   AVAIL_RES_LIST=$XRANDR_CURRENT
+   CURRENT_MON=""
+   
+   printf '%s\n' "$AVAIL_RES_LIST" | ( while read -r line; do
+      IS_MON="$(echo $line | grep -c "connected")";
+      if [ $IS_MON == 1 ]; then
+         CURRENT_MON="$(echo $line | grep -oE ".* (dis)?connected" |  sed "s/ .*//g")";
+         if [ "$CURRENT_MON" == "$1" ]; then
+#             echo "Found $line"
+            CURRENT_RES="$(echo $line | grep -o "[0-9][0-9]*x[0-9][0-9]*")"
+            echo $CURRENT_RES
+         fi;
+      fi;
+   done )
+}
+
+# Find out whether a monitor is active or not
+is_active() {
+   AVAIL_RES_LIST=$XRANDR_CURRENT
+   CURRENT_MON=""
+   
+   RES=$(printf '%s\n' "$AVAIL_RES_LIST" | ( while read -r line; do
+      IS_MON="$(echo $line | grep -c "connected")";
+      if [ $IS_MON == 1 ]; then
+         CURRENT_MON="$(echo $line | grep -oE ".* (dis)?connected" |  sed "s/ .*//g")";
+      elif [ "$CURRENT_MON" == "$1" ]; then
+         STAR="$(echo $line | grep -c "*")"
+         if [ $STAR == 1 ]; then
+            echo 1;
+         fi;
+      fi;
+   done ))
+   
+   if [ "$RES" == "" ]; then 
+      echo 0;
+   else
+      echo 1;
+   fi;
+}
+
+# Find the preferred resolution (often the maximal one at native monitor DPI)
+# for a given monitor
+pref_res() {
+   AVAIL_RES_LIST=$XRANDR_CURRENT
+   CURRENT_MON=""
+   
+   printf '%s\n' "$AVAIL_RES_LIST" | ( while read -r line; do
+      IS_MON="$(echo $line | grep -c "connected")";
+      if [ $IS_MON == 1 ]; then
+         CURRENT_MON="$(echo $line | grep -oE ".* (dis)?connected" |  sed "s/ .*//g")";
+      elif [ "$CURRENT_MON" == "$1" ]; then
+         IS_PREFERRED="$(echo $line | grep -c "+")"
+         if [ $IS_PREFERRED == 1 ]; then
+            MON_RES="$(echo $line | grep -oe "[0-9]*x[0-9]*")"
+            echo $MON_RES;
+         fi;
+      fi;
+   done )
+}
+
+# Switch to external monitor (i.e. HDMI) only
+hdmi() {
+   if [ "$EXTERNAL_MONITOR" == "" ]; then
+     zenity --notification --text "No monitor connected"
+   else
+    HDMI_AVAIL="$(echo $XRANDR_CURRENT | grep -c ""$EXTERNAL_MONITOR" connected")"
+    #    PRIMARY_MONITOR="$(xrandr --listmonitors | grep "*" | grep -m 1 -oE '[^ ]+$')"
+    if [ "$1" == "" ]; then
+        HDMI_PREF_RES="$(pref_res ""$EXTERNAL_MONITOR"")"
+    else
+        HDMI_PREF_RES="$1"
+    fi
+    
+    if [ $HDMI_AVAIL == 1 ]; then
+            xrandr --output "$INTERNAL_MONITOR" --off --output "$EXTERNAL_MONITOR" --auto --primary --transform none --mode "$HDMI_PREF_RES"
+#            audio_hdmi
+            zenity --notification --text "$EXTERNAL_MONITOR only"
+    else
+        echo "$EXTERNAL_MONITOR not available";
+    fi
+   fi;
+}
+
+# Switch to integrated panel (i.e. eDP1) only
+edp() {
+#    PRIMARY_MONITOR="$(xrandr --listmonitors | grep "*" | grep -m 1 -oE '[^ ]+$')"
+   if [ "$1" == "" ]; then
+      EDP_PREF_RES="$(pref_res ""$INTERNAL_MONITOR"")"
+   else
+      EDP_PREF_RES="$1"
+   fi
+   
+   if [ "$EXTERNAL_MONITOR" == "" ]; then
+     xrandr --output "$INTERNAL_MONITOR" --auto --primary --transform none --mode "$EDP_PREF_RES"
+   else
+     xrandr --output "$EXTERNAL_MONITOR" --off --output "$INTERNAL_MONITOR" --auto --primary --transform none --mode "$EDP_PREF_RES"
+   fi;
+   
+#   audio_edp
+   
+   zenity --notification --text "Internal display ($INTERNAL_MONITOR) only"
+}
+
+# Switch to external monitor if plugged, otherwise fall back on integrated
+automon() {
+#    PRIMARY_MONITOR="$(xrandr --listmonitors | grep "*" | grep -m 1 -oE '[^ ]+$')"
+   if [ "$EXTERNAL_MONITOR" == "" ]; then
+     edp
+   else
+     hdmi
+   fi;
+#    HDMI_AVAIL="$(echo $XRANDR_CURRENT | grep -c ""$EXTERNAL_MONITOR" connected")"
+   
+#    if [ $HDMI_AVAIL == 1 ]; then
+#       hdmi
+#    else
+#       edp
+#    fi
+
+}
+
+# Display a cloned image on both integrated and external monitors, the primary
+# being the external one (and thus set to its native resolution unless given as
+# an argument)
+clone_hdmi() {
+   if [ "$EXTERNAL_MONITOR" == "" ]; then
+     zenity --notification --text "No monitor connected"
+   else
+    HDMI_AVAIL="$(echo $XRANDR_CURRENT | grep -c ""$EXTERNAL_MONITOR" connected")"
+
+    if [ $HDMI_AVAIL == 1 ]; then
+        if [ "$1" == "" ]; then
+            HDMI_PREF_RES="$(pref_res ""$EXTERNAL_MONITOR"")"
+        else
+            HDMI_PREF_RES="$1"
+        fi
+
+        xrandr --output "$EXTERNAL_MONITOR" --auto --primary --mode "$HDMI_PREF_RES" --transform none --output "$INTERNAL_MONITOR" --auto --same-as "$EXTERNAL_MONITOR" --scale-from "$HDMI_PREF_RES"
+#        audio_hdmi
+        zenity --notification --text "Clone $INTERNAL_MONITOR = $EXTERNAL_MONITOR, with $EXTERNAL_MONITOR's preferred resolution"
+    else
+        echo "$EXTERNAL_MONITOR not available for cloning"
+    fi;
+   fi
+}
+
+# Same function as above, with the primary display being the integrated panel
+clone_edp() {
+   if [ "$EXTERNAL_MONITOR" == "" ]; then
+     zenity --notification --text "No monitor connected"
+   else
+    HDMI_AVAIL="$(echo $XRANDR_CURRENT | grep -c ""$EXTERNAL_MONITOR" connected")"
+
+    if [ $HDMI_AVAIL == 1 ]; then
+        if [ "$1" == "" ]; then
+            EDP_PREF_RES="$(pref_res ""$INTERNAL_MONITOR"")"
+        else
+            EDP_PREF_RES="$1"
+        fi
+
+        xrandr --output "$INTERNAL_MONITOR" --auto --primary --mode "$EDP_PREF_RES" --transform none --output "$EXTERNAL_MONITOR" --auto --same-as "$INTERNAL_MONITOR" --scale-from "$EDP_PREF_RES"
+#        audio_hdmi
+        zenity --notification --text "Clone $INTERNAL_MONITOR = $EXTERNAL_MONITOR, with $INTERNAL_MONITOR's preferred resolution"
+    else
+        echo "$EXTERNAL_MONITOR not available for cloning"
+    fi
+   fi
+}
+
+# Presentation mode - set external screen to right of current
+present() {
+   if [ "$EXTERNAL_MONITOR" == "" ]; then
+     zenity --notification --text "No monitor connected"
+   else
+    HDMI_AVAIL="$(echo $XRANDR_CURRENT | grep -c ""$EXTERNAL_MONITOR" connected")"
+
+    if [ $HDMI_AVAIL == 1 ]; then
+#         HDMI_PREF_RES="$(pref_res ""$EXTERNAL_MONITOR"")"
+        if [ "$1" == "" ]; then
+            HDMI_PREF_RES="$(pref_res ""$EXTERNAL_MONITOR"")"
+        else
+            HDMI_PREF_RES="$1"
+        fi
+        HDMI_ON=$(is_active "$EXTERNAL_MONITOR")
+        if [ $HDMI_ON == 1 ]; then
+            xrandr --output "$EXTERNAL_MONITOR" --off
+        fi;
+        
+        xrandr --output "$EXTERNAL_MONITOR" --mode "$HDMI_PREF_RES" --right-of "$INTERNAL_MONITOR" 
+#        audio_edp
+        zenity --notification --text "Presentation mode"
+    else
+        echo "$EXTERNAL_MONITOR not available for cloning"
+    fi
+   fi
+}
+
+round_robin(){
+   if [ "$EXTERNAL_MONITOR" == "" ]; then
+     edp
+   else
+    HDMI_AVAIL="$(echo $XRANDR_CURRENT | grep -c ""$EXTERNAL_MONITOR" connected")"
+    
+    if [ $HDMI_AVAIL == 1 ]; then
+        # eDP only > Present > Clone HDMI > Clone eDP > HDMI only
+        HDMI_ON=$(is_active "$EXTERNAL_MONITOR")   
+        EDP_ON=$(is_active "$INTERNAL_MONITOR")
+        
+        if [ $HDMI_ON == "1" ] && [ $EDP_ON == "1" ]; then
+            # filter based on pref res
+            EDP_PREF_RES="$(pref_res ""$INTERNAL_MONITOR"")"
+            HDMI_PREF_RES="$(pref_res ""$EXTERNAL_MONITOR"")"
+            EDP_CUR_RES="$(current_mon_res "$INTERNAL_MONITOR")";
+            HDMI_CUR_RES="$(current_mon_res "$EXTERNAL_MONITOR")";
+            if [ "$EDP_PREF_RES" == "$EDP_CUR_RES" ] && [ "$HDMI_PREF_RES" == "$HDMI_CUR_RES" ]; then
+                # We're in Present
+                clone_hdmi
+            elif [ "$EDP_PREF_RES" == "$EDP_CUR_RES" ] && [ "$HDMI_PREF_RES" != "$HDMI_CUR_RES" ]; then
+                # We're in Clone eDP
+                hdmi
+            else
+                # We're in Clone HDMI
+                clone_edp
+            fi;
+        elif [ $HDMI_ON == "0" ] && [ $EDP_ON == "1" ]; then
+            # We're in eDP only
+            present;
+        else 
+            # We're in HDMI only
+            edp;
+        fi;
+    else
+    edp
+    fi;
+   fi;
+}
+
+
+audio_edp() {
+   pactl set-card-profile 0 output:analog-stereo+input:analog-stereo
+#    zenity --notification --text "Audio goes to laptop"
+}
+
+audio_hdmi(){
+   pactl set-card-profile 0 output:hdmi-stereo+input:analog-stereo
+#    zenity --notification --text "Audio goes to HDMI"
+}
+
+volume_up(){
+    pactl set-sink-volume $(pacmd list-sinks | grep "*" | grep -o "[0-9]*") +5%
+}
+
+volume_down(){
+    pactl set-sink-volume $(pacmd list-sinks | grep "*" | grep -o "[0-9]*") -5%
+}
+
+volume_toggleMute(){
+    pactl set-sink-mute $(pacmd list-sinks | grep "*" | grep -o "[0-9]*") toggle
+}
+
+
+case $1 in
+    "pref_res") shift; set_xrandr_var; pref_res $@ ;;
+    "hdmi") shift; set_xrandr_var; hdmi $@ ;;
+    "edp") shift; set_xrandr_var; edp $@ ;;
+    "automon") shift; set_xrandr_var; automon $@ ;;
+    "clone_hdmi") shift; set_xrandr_var; clone_hdmi $@ ;;
+    "clone_edp") shift; set_xrandr_var; clone_edp $@ ;;
+    "present") shift; set_xrandr_var; present $@ ;;
+    "round_robin") shift; set_xrandr_var; round_robin $@ ;;
+    "detect_external") shift; set_xrandr_var; detect_external $@ ;;
+    "audio_edp") shift; audio_edp $@ ;;
+    "audio_hdmi") shift; audio_hdmi $@ ;;
+    "volume_up") shift; volume_up $@ ;;
+    "volume_down") shift; volume_down $@ ;;
+    "volume_toggleMute") shift; volume_toggleMute $@ ;;
+esac
+
