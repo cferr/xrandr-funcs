@@ -243,6 +243,8 @@ present() {
             xrandr --output "$EXTERNAL_MONITOR" --off
         fi;
         
+	EDP_PREF_RES="$(pref_res ""$INTERNAL_MONITOR"")"
+	xrandr --output "$INTERNAL_MONITOR" --auto --primary --transform none --mode "$EDP_PREF_RES"
         xrandr --output "$EXTERNAL_MONITOR" --mode "$HDMI_PREF_RES" --right-of "$INTERNAL_MONITOR" 
 #        audio_edp
         zenity --notification --text "Presentation mode"
@@ -270,8 +272,20 @@ round_robin(){
             EDP_CUR_RES="$(current_mon_res "$INTERNAL_MONITOR")";
             HDMI_CUR_RES="$(current_mon_res "$EXTERNAL_MONITOR")";
             if [ "$EDP_PREF_RES" == "$EDP_CUR_RES" ] && [ "$HDMI_PREF_RES" == "$HDMI_CUR_RES" ]; then
-                # We're in Present
-                clone_hdmi
+                if [ "$EDP_PREF_RES" == "$HDMI_PREF_RES" ]; then
+                    # Both monitors have the same resolution. We're either in Present or Clone.
+                    POS="$(echo $XRANDR_CURRENT | grep -c ""$EXTERNAL_MONITOR" connected" | grep -o "+[0-9][0-9]*+[0-9]*")"
+                    if [ "$POS" != "+0+0" ]; then
+                        # We're in presentation (displays aren't cloned) - move to clone
+                        clone_hdmi
+                    else
+                        # We're in clone (both monitors have the same preferred resolution)
+                        hdmi
+                    fi
+                else
+                    # We're in Present
+                    clone_hdmi
+                fi
             elif [ "$EDP_PREF_RES" == "$EDP_CUR_RES" ] && [ "$HDMI_PREF_RES" != "$HDMI_CUR_RES" ]; then
                 # We're in Clone eDP
                 hdmi
@@ -315,8 +329,13 @@ volume_toggleMute(){
     pactl set-sink-mute $(pacmd list-sinks | grep "*" | grep -o "[0-9]*") toggle
 }
 
+MODE="$1"
 
-case $1 in
+if [ "$MODE" == "" ]; then
+   MODE=$(zenity --list --title "Display mode" --text="Choose display mode" --column "mode-id" --column "mode-text" "edp" "Embedded display only" "hdmi" "External only" "present" "Presentation" "clone_edp" "Clone, embedded's resolution" "clone_hdmi" "Clone, external's resolution" --hide-column=1 --hide-header)
+fi
+
+case $MODE in
     "pref_res") shift; set_xrandr_var; pref_res $@ ;;
     "hdmi") shift; set_xrandr_var; hdmi $@ ;;
     "edp") shift; set_xrandr_var; edp $@ ;;
@@ -325,6 +344,7 @@ case $1 in
     "clone_edp") shift; set_xrandr_var; clone_edp $@ ;;
     "present") shift; set_xrandr_var; present $@ ;;
     "round_robin") shift; set_xrandr_var; round_robin $@ ;;
+    "is_active") shift; set_xrandr_var; is_active $@ ;;
     "detect_external") shift; set_xrandr_var; detect_external $@ ;;
     "audio_edp") shift; audio_edp $@ ;;
     "audio_hdmi") shift; audio_hdmi $@ ;;
