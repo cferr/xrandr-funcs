@@ -331,8 +331,18 @@ volume_toggleMute(){
 
 MODE="$1"
 
+if [ "$INTERNAL_MONITOR" == "" ]; then
+   zenity --width=200 --error --text="Internal monitor variable not defined. Please define INTERNAL_MONITOR variable (e.g. in your .bash_profile file)."
+   exit
+fi
+
 if [ "$MODE" == "" ]; then
-   MODE=$(zenity --list --title "Display mode" --text="Choose display mode" --column "mode-id" --column "mode-text" "edp" "Embedded display only" "hdmi" "External only" "present" "Presentation" "clone_edp" "Clone, embedded's resolution" "clone_hdmi" "Clone, external's resolution" --hide-column=1 --hide-header)
+   set_xrandr_var;
+   if [ "$EXTERNAL_MONITOR" != "" ]; then
+      MODE=$(zenity --list --title "Display mode" --text="Choose display mode" --column "mode-id" --column "mode-text" "edp" "Embedded display ($INTERNAL_MONITOR) only" "hdmi" "External ($EXTERNAL_MONITOR) only" "present" "Presentation, left: $INTERNAL_MONITOR (primary), right: $EXTERNAL_MONITOR" "clone_edp" "Clone, $INTERNAL_MONITOR's resolution" "clone_hdmi" "Clone, $EXTERNAL_MONITOR's resolution" --hide-column=1 --hide-header)
+   else
+      zenity --notification --text "No monitor connected"
+   fi
 fi
 
 case $MODE in
