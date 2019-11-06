@@ -129,6 +129,7 @@ hdmi() {
     fi
     
     if [ $HDMI_AVAIL == 1 ]; then
+            xrandr -s "$HDMI_PREF_RES"
             xrandr --output "$INTERNAL_MONITOR" --off --output "$EXTERNAL_MONITOR" --auto --primary --transform none --mode "$HDMI_PREF_RES"
 #            audio_hdmi
             zenity --notification --text "$EXTERNAL_MONITOR only"
@@ -148,8 +149,10 @@ edp() {
    fi
    
    if [ "$EXTERNAL_MONITOR" == "" ]; then
+     xrandr -s "$EDP_PREF_RES"
      xrandr --output "$INTERNAL_MONITOR" --auto --primary --transform none --mode "$EDP_PREF_RES"
    else
+     xrandr -s "$EDP_PREF_RES"
      xrandr --output "$EXTERNAL_MONITOR" --off --output "$INTERNAL_MONITOR" --auto --primary --transform none --mode "$EDP_PREF_RES"
    fi;
    
